@@ -1,4 +1,3 @@
-
 #####* function used to calculate noise: global adjusted standard deviation *#####
 predictSD<-function(expData) {
   ## polynomial model 
@@ -71,40 +70,6 @@ noiseDM<-function(expData,stageID) {
   return(dmList)
 }
 
-#####* function used to calculate stage specific adjusted standard deviation *#####
-noiseStageSD<-function(expData,stageID) {
-  ajsdList<-list()
-  for (i in 1:length(stageID)) {
-    subData<-expData[,grepl(stageID[i],colnames(expData))]
-    ## polynomial model 
-    subData$mean<-rowMeans(subData)
-    subData$sd<-apply(subData[,-ncol(subData)],1,function(x) sd(x))
-    m1 <- lm(sd~mean, subData)
-    m2 <- update(m1, .~. + I(mean^2), subData)
-    m3 <- update(m2, .~. + I(mean^3), subData)
-    m4 <- update(m3, .~. + I(mean^4), subData)
-    m5 <- update(m4, .~. + I(mean^5), subData)
-    m6 <- update(m4, .~. + I(mean^6), subData)
-    totalM<-list(m1,m2,m3,m4,m5,m6)
-    anova(m5,m6)
-    for (j in c(1:5)) {
-      modelComp <- anova(totalM[[j]],totalM[[j+1]])
-      if (is.na(modelComp$`Pr(>F)`[2]) | modelComp$`Pr(>F)`[2]>0.05) {
-        m<-totalM[[j]]
-        break
-      }
-    }
-    ## adjusted sd
-    ajsdList[[i]]<-subData$sd/predict(m)
-  }
-  return(ajsdList)
-}
-
-
-
-
-
-
 #####* promoter and gene body histone signal based correlation *#####
 mean_cor<-function(promoter.data,gene.data,histone.markers) {
   promoter.cor.eff<-c()
@@ -117,11 +82,11 @@ mean_cor<-function(promoter.data,gene.data,histone.markers) {
   
   for (i in c(1:n)) { ## four markers
     ## promoter
-    promoter.cor.results<-cor.test(promoter.data[,histone.markers[i]],promoter.data$variable)
+    promoter.cor.results<-cor.test(promoter.data[,histone.markers[i]],promoter.data$variable,method="spearman")
     promoter.cor.eff[i]<-promoter.cor.results$estimate
     promoter.cor.pvalue[i]<-promoter.cor.results$p.value
     ## gene body
-    gene.cor.results<-cor.test(gene.data[,histone.markers[i]],gene.data$variable)
+    gene.cor.results<-cor.test(gene.data[,histone.markers[i]],gene.data$variable,method="spearman")
     gene.cor.eff[i]<-gene.cor.results$estimate
     gene.cor.pvalue[i]<-gene.cor.results$p.value
   }

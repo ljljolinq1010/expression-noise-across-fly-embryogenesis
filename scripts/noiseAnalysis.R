@@ -13,7 +13,6 @@ library(ggplot2)
 library(gdata) 
 ## plot color
 pal <- c(brewer.pal(9, "Set1"), brewer.pal(8, "Set2"), brewer.pal(12, "Set3"))
-
 #####** data input **#####
 ## Load count summary
 count.E1_1<-read.csv("data/BRBseq/E1_1_count.txt", sep="\t", header=TRUE, row.names=1, check.names = F)
@@ -155,11 +154,86 @@ pheatmap(as.matrix(cbind(meiosis.genes.exp.minor[-1],meiosis.genes.exp.major[-1]
          fontsize=20,labels_col = "",color=rev(brewer.pal(11,"RdBu")),annotation = sample.annotation,annotation_colors = anno_colors)
 
 #####** expression noise across development **#####
-#####* global adjusted SD *#####
+#####* adjusted SD *#####
+##### all genes after quality control #####
 noise.ajsd <-noiseAJSD(major.dataset[-1],stage.id)
 ## plot
 boxplot(noise.ajsd,outline=FALSE,ylim=c(-0.1,2),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="Global adjusted SD",
         col=stage.color, xaxt = "n")
+
+##### only use genes expressed in all stages #####
+noise.ajsd.df<-data.frame(rownames(major.dataset[-1]),noise.ajsd)
+rownames(noise.ajsd.df)<-NULL
+names(noise.ajsd.df)<-c("Ensembl.Gene.ID",stage.id)
+
+## mean value in each stage
+mean.exp.list<-list()
+for (i in c(1:8)) {
+  sub.data<-major.dataset[,grepl(stage.id[i],colnames(major.dataset))]
+  mean.exp.list[[i]]<-rowMeans(sub.data)
+}
+major.dataset.mean<-data.frame(rownames(major.dataset),mean.exp.list)
+names(major.dataset.mean)<-c("Ensembl.Gene.ID",stage.id)
+rownames(major.dataset.mean)<-NULL
+
+## define expressed genes (expression value > 1)
+major.dataset.mean$freq<-apply(major.dataset.mean[,c(2:9)],1,function(x) length(x[x>1]))
+expGene<-subset(major.dataset.mean,major.dataset.mean$freq>7)
+expGeneNoise<-noise.ajsd.df[noise.ajsd.df$Ensembl.Gene.ID%in%expGene$Ensembl.Gene.ID,]
+
+## plot
+boxplot(expGeneNoise[-1],outline=FALSE,ylim=c(-0.1,2),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="Global adjusted SD",
+        col=stage.color, xaxt = "n")
+
+##### only use genes with constant expression across development #####
+sigValue<-c()
+for (i in c(1:8004)) {
+  a<-major.dataset[i,-1]
+  b<-data.frame(as.numeric(a),c(rep(stage.id,times=c(11,24,27,14,21,18,21,14))))
+  colnames(b)<-c("exp","stage")
+  # compute the analysis of variance
+  res.aov <- aov(exp ~ stage, data = b)
+  # summary of the analysis
+  results<-summary(res.aov)
+  sigValue[i]<-results[[1]][1,5]
+}
+sigValue<-data.frame(sigValue)
+## qvalue
+sigValueCorrect<- qvalue(sigValue$sigValue,pi0=1)$qvalues
+sigValueCorrect<-data.frame(rownames(major.dataset),as.numeric(sigValueCorrect))
+
+## constant expression genes defined as qvalue >0.05
+constantGene<-subset(sigValueCorrect,sigValueCorrect$as.numeric.sigValueCorrect.>0.05)
+constantGeneNoise<-noise.ajsd.df[noise.ajsd.df$Ensembl.Gene.ID%in%constantGene$rownames.major.dataset.,]
+## plot
+boxplot(constantGeneNoise[-1],outline=FALSE,ylim=c(-0.1,2),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="Global adjusted SD",
+        col=stage.color, xaxt = "n")
+
+##### transcription factor #####
+TF<-read.table("data/annotation_files/tf.txt")
+TFnoise<-noise.ajsd.df[noise.ajsd.df$Ensembl.Gene.ID%in%TF$V1,]
+## plot
+boxplot(TFnoise[-1],outline=FALSE,ylim=c(-0.1,2),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="Global adjusted SD",
+        col=stage.color, xaxt = "n")
+
+##### broad promter and core promoter noise  #####
+promoterSI<-fread("data/annotation_files/promoter_si.txt")
+colnames(promoterSI)<-c("Gene.Name","SI")
+gene.id.name<-read.table("data/annotation_files/fly_ensemblID_geneName.txt",sep="\t",quote="",h=T)
+names(gene.id.name)<-c("Ensembl.Gene.ID","Gene.Name")
+promoterSI<-merge(promoterSI,gene.id.name,by="Gene.Name")
+promoterSInoise<-merge(noise.ajsd.df,promoterSI,by="Ensembl.Gene.ID")
+
+broadPromoter<-subset(promoterSInoise,promoterSInoise$SI<=-1.5)
+corePromoter<-subset(promoterSInoise,promoterSInoise$SI>-1.5)
+
+## plot both together
+noiseData<-list(broadPromoter[,2],corePromoter[,2],broadPromoter[,3],corePromoter[,3],broadPromoter[,4],corePromoter[,4],
+                broadPromoter[,5],corePromoter[,5],broadPromoter[,6],corePromoter[,6],broadPromoter[,7],corePromoter[,7],
+                broadPromoter[,8],corePromoter[,8],broadPromoter[,9],corePromoter[,9])
+noisePlot<-boxplot(noiseData,at=c(1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23),outline=FALSE,ylim=c(-0.1,2),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="Adjusted SD",
+                   col=rep(stage.color,each=2), xaxt = "n")
+
 
 #####* distance to median *#####
 noise.dm <- noiseDM(major.dataset[-1],stage.id)
@@ -181,28 +255,15 @@ names(noise.cv.df)<-c("Ensembl.Gene.ID",stage.id)
 boxplot(noise.cv,outline=FALSE,ylim=c(0,3),notch=T,cex.main=1.5,cex.axis=1.5,cex.lab=1.5,ylab="CV",
         col=stage.color, xaxt = "n")
 
-#####** stage specific adjusted SD **#####
-## we don't use the globally predicted SD to adjust the observed SD in each stage, we use stage specifically predicted SD instead 
-stage.specific.noise.ajsd<-noiseStageSD(major.dataset[-1],stage.id)
-boxplot(stage.specific.noise.ajsd)
-stage.specific.noise.ajsd.df<-data.frame(rownames(major.dataset),stage.specific.noise.ajsd)
-rownames(stage.specific.noise.ajsd.df)<-NULL
-names(stage.specific.noise.ajsd.df)<-c("Ensembl.Gene.ID",stage.id)
-stage.specific.noise.ajsd.mean<-data.frame(stage.specific.noise.ajsd.df$Ensembl.Gene.ID,rowMeans(stage.specific.noise.ajsd.df[-1]))
-names(stage.specific.noise.ajsd.mean)<-c("Ensembl.Gene.ID","ajsd")
 
 #####** why lower noise in phylotypic stage E3? (histone modifications) **#####
-## promoter signal 
-promoter.hist<-fread("data/histone_modifications/promoter_histone_fe.wig",sep="\t")
+#####* histone modification signal (Z score) across development *#####
+promoter.hist<-fread("data/histone_modifications/promoter_histone_zscore.wig",sep="\t")
 colnames(promoter.hist)<-c("chr","start","end","Ensembl.Gene.ID",
-                            paste0(rep( c("pro_H3K27Ac_","pro_H3K27Me3_","pro_H3K4Me1_","pro_H3K4Me3_",
-                                          "pro_H3K9Ac_","pro_H3K9Me3_"),6), rep(c(1,4,5,6,2,3),each=6)))
-# only use active markers
-promoter.hist<-promoter.hist[,c("chr","start","end","Ensembl.Gene.ID",paste0(rep("pro_H3K4Me1_",6),c(1:6)),
-                                  paste0(rep("pro_H3K4Me3_",6),c(1:6)),paste0(rep("pro_H3K9Ac_",6),c(1:6)),
-                                  paste0(rep("pro_H3K27Ac_",6),c(1:6)))]
+                           paste0(rep( c("pro_H3K27Ac_","pro_H3K4Me1_","pro_H3K4Me3_",
+                                         "pro_H3K9Ac_"),each=6), rep(c(1,2,3,4,5,6),4)))
 promoter.hist<-data.frame(promoter.hist)
-# remove rows with ".", this is becuased some genome regions without any histone modification information
+promoter.hist<-promoter.hist[promoter.hist$Ensembl.Gene.ID%in%noise.ajsd.df$Ensembl.Gene.ID,]
 for  (i in 5:28) {
   promoter.hist[,i]<-as.numeric(promoter.hist[,i])
 }
@@ -211,16 +272,42 @@ for  (i in 5:28) {
 }
 
 ## gene body signal
-gene.hist<-fread("data/histone_modifications/genebody_histone_fe.wig",sep="\t")
+gene.hist<-fread("data/histone_modifications/genebody_histone_zscore.wig",sep="\t")
 colnames(gene.hist)<-c("chr","start","end","Ensembl.Gene.ID",
-                           paste0(rep( c("gene_H3K27Ac_","gene_H3K27Me3_","gene_H3K4Me1_","gene_H3K4Me3_",
-                                         "gene_H3K9Ac_","gene_H3K9Me3_"),6), rep(c(1,4,5,6,2,3),each=6)))
-# only use active markers
-gene.hist<-gene.hist[,c("chr","start","end","Ensembl.Gene.ID",paste0(rep("gene_H3K4Me1_",6),c(1:6)),
-                                paste0(rep("gene_H3K4Me3_",6),c(1:6)),paste0(rep("gene_H3K9Ac_",6),c(1:6)),
-                                paste0(rep("gene_H3K27Ac_",6),c(1:6)))]
+                       paste0(rep( c("gene_H3K27Ac_","gene_H3K4Me1_","gene_H3K4Me3_",
+                                     "gene_H3K9Ac_"),each=6), rep(c(1,2,3,4,5,6),4)))
 gene.hist<-data.frame(gene.hist)
-# remove rows with "."
+for  (i in 5:28) {
+  gene.hist[,i]<-as.numeric(gene.hist[,i])
+}
+for  (i in 5:28) {
+  gene.hist<-gene.hist[!is.na(gene.hist[,i]),]
+}
+gene.hist<-gene.hist[gene.hist$Ensembl.Gene.ID%in%noise.ajsd.df$Ensembl.Gene.ID,]
+## plot: gene body signal for H3K9Ac
+boxplot(gene.hist[,c(23:28)],notch=T,outline=FALSE,pch=16,outcex=0.5,boxwex=0.7, 
+        col=pal[2],xaxt = "n",ylim=c(-5,15),ylab="Zscore (gene body)",main="H3K9Ac",cex.axis = 2,cex.main = 2,cex.lab = 2)
+
+#####* histone modification signal (tag)  and noise correlation *#####
+## promoter signal 
+promoter.hist<-fread("data/histone_modifications/promoter_histone_tag.wig",sep="\t")
+colnames(promoter.hist)<-c("chr","start","end","Ensembl.Gene.ID",
+                           paste0(rep( c("pro_H3K27Ac_","pro_H3K4Me1_","pro_H3K4Me3_",
+                                         "pro_H3K9Ac_"),each=6), rep(c(1,2,3,4,5,6),4)))
+promoter.hist<-data.frame(promoter.hist)
+for  (i in 5:28) {
+  promoter.hist[,i]<-as.numeric(promoter.hist[,i])
+}
+for  (i in 5:28) {
+  promoter.hist<-promoter.hist[!is.na(promoter.hist[,i]),]
+}
+
+## gene body signal
+gene.hist<-fread("data/histone_modifications/genebody_histone_tag.wig",sep="\t")
+colnames(gene.hist)<-c("chr","start","end","Ensembl.Gene.ID",
+                       paste0(rep( c("gene_H3K27Ac_","gene_H3K4Me1_","gene_H3K4Me3_",
+                                     "gene_H3K9Ac_"),each=6), rep(c(1,2,3,4,5,6),4)))
+gene.hist<-data.frame(gene.hist)
 for  (i in 5:28) {
   gene.hist[,i]<-as.numeric(gene.hist[,i])
 }
@@ -228,10 +315,11 @@ for  (i in 5:28) {
   gene.hist<-gene.hist[!is.na(gene.hist[,i]),]
 }
 
-#####* histone signal and noise correlation *#####
-promoter.hist.noise<-merge(promoter.hist,stage.specific.noise.ajsd.df,by="Ensembl.Gene.ID")
-gene.hist.noise<-merge(gene.hist,stage.specific.noise.ajsd.df,by="Ensembl.Gene.ID")
-## mean signal and mean noise across development
+## merge histone and noise  
+promoter.hist.noise<-merge(promoter.hist,noise.ajsd.df,by="Ensembl.Gene.ID")
+gene.hist.noise<-merge(gene.hist,noise.ajsd.df,by="Ensembl.Gene.ID")
+
+## mean signal and mean noise correlation
 histone.markers<-c("H3K4Me1","H3K4Me3","H3K9Ac","H3K27Ac")
 # promoter
 promoter.hist.mean<-list()
@@ -240,8 +328,8 @@ for (i in c(1:4)) {
   promoter.hist.mean[[i]]<-rowMeans(promoter.temp.data)
 }
 promoter.noise.mean<-rowMeans(promoter.hist.noise[,stage.id])
-promoter.hist.noise.mean<-data.frame(data.frame(promoter.hist.mean),data.frame(promoter.noise.mean))
-colnames(promoter.hist.noise.mean)[c(1:4)]<-histone.markers
+promoter.hist.noise.mean<-data.frame(promoter.hist.noise$Ensembl.Gene.ID,data.frame(promoter.hist.mean),data.frame(promoter.noise.mean))
+colnames(promoter.hist.noise.mean)<-c("Ensembl.Gene.ID",histone.markers,"noise")
 
 # gene body
 gene.hist.mean<-list()
@@ -250,72 +338,26 @@ for (i in c(1:4)) {
   gene.hist.mean[[i]]<-rowMeans(gene.temp.data)
 }
 gene.noise.mean<-rowMeans(gene.hist.noise[,stage.id])
-gene.hist.noise.mean<-data.frame(data.frame(gene.hist.mean),data.frame(gene.noise.mean))
-colnames(gene.hist.noise.mean)[c(1:4)]<-histone.markers
+gene.hist.noise.mean<-data.frame(gene.hist.noise$Ensembl.Gene.ID, data.frame(gene.hist.mean),data.frame(gene.noise.mean))
+colnames(gene.hist.noise.mean)<-c("Ensembl.Gene.ID",histone.markers,"noise")
 
-## correlation
-cor.results<-mean_cor(promoter.hist.noise.mean,gene.hist.noise.mean,histone.markers)
+## correlation 
+cor.results<-mean_cor(promoter.hist.noise.mean[,c(2:6)],gene.hist.noise.mean[,c(2:6)],histone.markers)
 
 ## plot
 promoter.cor.eff<-cor.results[[1]]
 gene.cor.eff<-cor.results[[3]]
-signif.marks<-rep("***",8) 
-par(las=2,lwd = 2)
-par(mar=c(7,7,2,2))
+signif.marks<-c(rep("***",8))
 cor.eff<-c(promoter.cor.eff[1],gene.cor.eff[1],promoter.cor.eff[2],gene.cor.eff[2],
            promoter.cor.eff[3],gene.cor.eff[3],promoter.cor.eff[4],gene.cor.eff[4])
 
-cor.eff.plot<-barplot(cor.eff,main="Correlation with adjusted SD", horiz=TRUE,xlim=c(-1,0.1),
-                      names.arg =c("H3K4Me1","","H3K4Me3","","H3K9Ac","","H3K27Ac",""),xlab = "Pearson's r",
+cor.eff.plot<-barplot(cor.eff,main="Correlation with promoter Phastcons", horiz=TRUE,xlim=c(-1,0.1),
+                      names.arg =c("H3K4Me1","","H3K4Me3","","H3K9Ac","","H3K27Ac",""),xlab = "Spearman's Rho",
                       cex.axis =1.3,cex.names = 1.3,cex.lab=1.3,width=c(3,3,3,3),col=rep(c(pal[1],pal[2]),4))
 
 legend("topleft",c("promoter","gene body"), fill=c(pal[1],pal[2]), horiz=TRUE, cex=1,bty = "n")
 for (i in c(1:length(signif.marks))) {
   text(0.05,cor.eff.plot[i],signif.marks[i],cex = 1.2) ## * <0.05, ** <0.01, *** <0.001
-}
-
-#####* histone signal ratio between low noise genes and high noise genes *#####
-noise.data<-noise.cv.df
-noise.data<-na.omit(noise.data)
-histone.markers<-c("H3K4Me1","H3K4Me3","H3K9Ac","H3K27Ac")
-histone.pro.ratio<-matrix(rep(NA,32),nrow = 4,ncol = 8)
-histone.gene.ratio<-matrix(rep(NA,32),nrow = 4,ncol = 8)
-
-for (i in c(1:8)) { ## for markers
-  j=i
-  if (i==4 | i==5 | i==6 | i==7) {
-    j=i-1
-  } 
-  if (i==8) {
-    j=i-2
-  }
-  n=0.01 ## extreme 1% low and high noise genes
-  lowNoiseGene<-subset(noise.data,noise.data[stage.id[i]]<quantile(noise.data[stage.id[i]],probs=n,na.rm=T))
-  highNoiseGene<-subset(noise.data,noise.data[stage.id[i]]>quantile(noise.data[stage.id[i]],probs=1-n,na.rm=T))
-  ## get the corresponding histone signal
-  lowNoiseGene.pro<-promoter.hist[promoter.hist$Ensembl.Gene.ID%in%lowNoiseGene$Ensembl.Gene.ID,]
-  highNoiseGene.pro<-promoter.hist[promoter.hist$Ensembl.Gene.ID%in%highNoiseGene$Ensembl.Gene.ID,]
-  lowNoiseGene.gene<-gene.hist[gene.hist$Ensembl.Gene.ID%in%lowNoiseGene$Ensembl.Gene.ID,]
-  highNoiseGene.gene<-gene.hist[gene.hist$Ensembl.Gene.ID%in%highNoiseGene$Ensembl.Gene.ID,]
-  ## histone median signal ratio between low noise genes and high noise genes
-  for (k in c(1:4)) {
-    histone.pro.ratio[k,i]<- median(lowNoiseGene.pro[,paste0("pro_",histone.markers[k],"_",j)],na.rm = T)/median(highNoiseGene.pro[,paste0("pro_",histone.markers[k],"_",j)],na.rm = T)
-    histone.gene.ratio[k,i] <-median(lowNoiseGene.gene[,paste0("gene_",histone.markers[k],"_",j)],na.rm = T)/median(highNoiseGene.gene[,paste0("gene_",histone.markers[k],"_",j)],na.rm = T)
-  }
-}
-
-## plot 
-par(mar=c(4,7,2,1),mfrow = c(2,2))
-for (i in c(1:4)) {
-  
-  ratio1<-histone.pro.ratio[i,]
-  ratio2<-histone.gene.ratio[i,]
-  col1<-rep(pal[1],8)
-  col2<-rep(pal[2],8)
-  
-  ratioPlot<-plot(ratio2,main=histone.markers[i],col=col2,cex.lab=2,cex.axis = 2,cex.main = 2,type="b",xlab="",xaxt="n",
-                  ylab="Median signal ratio \n low noise genes / high noise genes",pch=15,cex=2.5,lwd=5,ylim=c(0,max(ratio2)+max(ratio2)*0.1))
-  lines(ratio1,col=col1,cex.lab=2,cex.axis = 2,cex.main = 2,type="b",pch=15,cex=2.5,lwd=5)
 }
 
 #####** histone and promoter sequence conservation correlation **#####
@@ -328,51 +370,36 @@ names(promoter.phastCons)<-c("Gene.Name","PhastCons")
 promoter.phastCons<-promoter.phastCons[!grepl("^.$", promoter.phastCons$PhastCons),]
 promoter.phastCons$PhastCons<-as.numeric(promoter.phastCons$PhastCons)
 promoter.phastCons<-merge(promoter.phastCons,gene.id.name,by="Gene.Name")
+promoter.phastCons$Gene.Name<-NULL
+## merge
+promoter.hist.noise.mean.phastCons<-merge(promoter.hist.noise.mean, promoter.phastCons,by="Ensembl.Gene.ID")
+promoter.hist.noise.mean.phastCons<-na.omit(promoter.hist.noise.mean.phastCons)
+gene.hist.noise.mean.phastCons<-merge(gene.hist.noise.mean, promoter.phastCons,by="Ensembl.Gene.ID")
+gene.hist.noise.mean.phastCons<-na.omit(gene.hist.noise.mean.phastCons)
 
-## merge histone signal and phastcons
-promoter.hist.phastCons<-merge(promoter.hist.noise, promoter.phastCons,by="Ensembl.Gene.ID")
-promoter.hist.phastCons<-na.omit(promoter.hist.phastCons)
-gene.hist.phastCons<-merge(gene.hist.noise, promoter.phastCons,by="Ensembl.Gene.ID")
-gene.hist.phastCons<-na.omit(gene.hist.phastCons)
+## correlation
+cor.results<-mean_cor(promoter.hist.noise.mean.phastCons[,c(2:5,7)],gene.hist.noise.mean.phastCons[,c(2:5,7)],histone.markers)
 
-## mean signal and phastcons correlation
-# promoter signal
-promoter.hist.mean<-list()
-for (i in c(1:4)) {
-  promoter.temp.data<-promoter.hist.phastCons[,paste0("pro_",rep(histone.markers[i],6),"_",c(1:6))]
-  promoter.hist.mean[[i]]<-rowMeans(promoter.temp.data)
-}
-promoter.hist.phast.mean<-data.frame(data.frame(promoter.hist.mean),promoter.hist.phastCons$PhastCons)
-colnames(promoter.hist.phast.mean)<-c(histone.markers,"phastCons")
-# gene body signal
-gene.hist.mean<-list()
-for (i in c(1:4)) {
-  gene.temp.data<-gene.hist.phastCons[,paste0("gene_",rep(histone.markers[i],6),"_",c(1:6))]
-  gene.hist.mean[[i]]<-rowMeans(gene.temp.data)
-}
-gene.hist.phast.mean<-data.frame(data.frame(gene.hist.mean),gene.hist.phastCons$PhastCons)
-colnames(gene.hist.phast.mean)<-c(histone.markers,"phastCons")
-# correlation
-cor.results<-mean_cor(promoter.hist.phast.mean,gene.hist.phast.mean,histone.markers)
 
-## plot
-promoter.cor.eff<-cor.results[[1]]
-gene.cor.eff<-cor.results[[3]]
-signif.marks<-rep("***",8) 
-par(las=2,lwd = 2)
-par(mar=c(7,7,2,2),mfrow = c(1,1))
+#####* histone and promoter sequence pi correlation *#####
+## the pi caluclated by using all snps or only common snps (remove minor allele frequence <0.05) is quite similar
+promoter.pi<-fread("data/promoter/promoter_narrow_pi.txt")
+promoter.pi<-promoter.pi[,c(4,5)]
+names(promoter.pi)<-c("Gene.Name","pi")
+promoter.pi<-promoter.pi[!grepl("^.$", promoter.pi$pi),]
+promoter.pi$pi<-as.numeric(promoter.pi$pi)
+promoter.pi<-merge(promoter.pi,gene.id.name,by="Gene.Name")
+promoter.pi$Gene.Name<-NULL
+promoter.pi<-na.omit(promoter.pi)
+promoter.pi$pi<-promoter.pi$pi*100000/60
 
-cor.eff<-c(promoter.cor.eff[1],gene.cor.eff[1],promoter.cor.eff[2],gene.cor.eff[2],
-           promoter.cor.eff[3],gene.cor.eff[3],promoter.cor.eff[4],gene.cor.eff[4])
-
-cor.eff.plot<-barplot(cor.eff,main="Correlation with promoter Phastcons", horiz=TRUE,xlim=c(-1,0.1),
-                      names.arg =c("H3K4Me1","","H3K4Me3","","H3K9Ac","","H3K27Ac",""),xlab = "Pearson's r",
-                      cex.axis =1.3,cex.names = 1.3,cex.lab=1.3,width=c(3,3,3,3),col=rep(c(pal[1],pal[2]),4))
-
-legend("topleft",c("promoter","gene body"), fill=c(pal[1],pal[2]), horiz=TRUE, cex=1,bty = "n")
-for (i in c(1:length(signif.marks))) {
-  text(0.05,cor.eff.plot[i],signif.marks[i],cex = 1.2) ## * <0.05, ** <0.01, *** <0.001
-}
+## merge
+promoter.hist.noise.mean.pi<-merge(promoter.hist.noise.mean, promoter.pi,by="Ensembl.Gene.ID")
+promoter.hist.noise.mean.pi<-na.omit(promoter.hist.noise.mean.pi)
+gene.hist.noise.mean.pi<-merge(gene.hist.noise.mean, promoter.pi,by="Ensembl.Gene.ID")
+gene.hist.noise.mean.pi<-na.omit(gene.hist.noise.mean.pi)
+## correlation
+cor.results<-mean_cor(promoter.hist.noise.mean.pi[,c(2:5,7)],gene.hist.noise.mean.pi[,c(2:5,7)],histone.markers)
 
 #####** compare sequence conservation of promoters of stage specifically expressed genes **#####
 load("data/expression_modules/stage_specific_high_exp_genes.RData")
